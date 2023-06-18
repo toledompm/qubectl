@@ -18,29 +18,33 @@ type SubCommand uint8
 type SubCommandHandler func(*QueryOptions) error
 
 const (
-	Echo SubCommand = iota
+	Custom SubCommand = iota
 	PortForward
 )
 
 var (
 	queryExample = `
-	TODO
+	// Port forward to a pod matching the regex
+	kubectl q port-forward -r my-pod-regex
+
+	// Port forward, with address
+	kubectl q port-forward -r my-pod-regex -- --address 0.0.0.0
+
+	// Folow logs of a pod matching the regex
+	kubectl q custom -r my-pod-regex -- logs -f
+
+	// Get pod yaml (custom is the default subcommand)
+	kubectl q -r my-pod-regex -- get pod -o yaml
 	`
 	subCommandStringMap = map[string]SubCommand{
-		"echo": Echo,
-		"pf":   PortForward,
+		"custom":       Custom,
+		"port-forward": PortForward,
 	}
 	subCommandHandlerMap = map[SubCommand]SubCommandHandler{
-		Echo:        echo,
+		Custom:      custom,
 		PortForward: portForward,
 	}
 )
-
-type portForwardOptions struct {
-	containter    string
-	containerPort int32
-	hostPort      int32
-}
 
 type QueryOptions struct {
 	configFlags *genericclioptions.ConfigFlags
@@ -48,12 +52,11 @@ type QueryOptions struct {
 
 	selectedPod string
 
-	handler SubCommandHandler
+	handler              SubCommandHandler
+	forwardedKubectlArgs []string
 
 	podRegex  string
 	namespace string
-
-	portForwardOptions portForwardOptions
 
 	genericclioptions.IOStreams
 }
@@ -71,8 +74,9 @@ func NewCmdQuery(streams genericclioptions.IOStreams) *cobra.Command {
 	o := NewQueryOptions(streams)
 
 	cmd := &cobra.Command{
-		Use:          "q [pf] [flags]",
+		Use:          "q [command] [flags] -- [kubectl args]",
 		Short:        "Queries for a pod and executes the given command",
+		Long:         "q serves as a wrapper to other kubectl commands. It queries for a pod matching the given regex and executes the given command with the pod name appended. Some commands, such as port-forward, are handled by q itself before being forwarded to kubectl.",
 		Example:      fmt.Sprintf(queryExample, "kubectl"),
 		SilenceUsage: true,
 		RunE: func(c *cobra.Command, args []string) error {
@@ -92,9 +96,6 @@ func NewCmdQuery(streams genericclioptions.IOStreams) *cobra.Command {
 
 	cmd.Flags().StringVarP(&o.podRegex, "pod-regex", "r", "", "The regex to match the pod name")
 
-	cmd.Flags().StringVarP(&o.portForwardOptions.containter, "container", "c", "", "Container name")
-	cmd.Flags().Int32VarP(&o.portForwardOptions.containerPort, "container-port", "p", 0, "Container port to forward to the host")
-	cmd.Flags().Int32VarP(&o.portForwardOptions.hostPort, "host-port", "P", 0, "Host port to forward to the pod")
 	o.configFlags.AddFlags(cmd.Flags())
 
 	return cmd
@@ -116,14 +117,6 @@ func (o *QueryOptions) Complete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if o.portForwardOptions.containerPort, err = cmd.Flags().GetInt32("container-port"); err != nil {
-		return err
-	}
-
-	if o.portForwardOptions.hostPort, err = cmd.Flags().GetInt32("host-port"); err != nil {
-		return err
-	}
-
 	if restConfig, err := o.configFlags.ToRESTConfig(); err != nil {
 		return err
 	} else {
@@ -138,10 +131,16 @@ func (o *QueryOptions) Complete(cmd *cobra.Command, args []string) error {
 		ok         bool
 	)
 
-	if len(args) > 0 {
+	argsLenAtDash := cmd.Flags().ArgsLenAtDash()
+
+	if len(args) > 0 && argsLenAtDash != 0 {
 		if subCommand, ok = subCommandStringMap[args[0]]; !ok {
 			return fmt.Errorf("Invalid subcommand %s", args[0])
 		}
+	}
+
+	if argsLenAtDash >= 0 {
+		o.forwardedKubectlArgs = args[argsLenAtDash:]
 	}
 
 	o.handler = subCommandHandlerMap[subCommand]

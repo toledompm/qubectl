@@ -3,10 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"net"
-	"os/exec"
+	"strconv"
 
 	"github.com/manifoldco/promptui"
+	k "github.com/toledompm/qubectl/pkg/kubectl-wrapper"
+	"github.com/toledompm/qubectl/pkg/prompt"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -25,19 +26,17 @@ func portForward(o *QueryOptions) error {
 
 	var selectedContainer corev1.Container
 
-	if o.portForwardOptions.containter != "" {
-		for _, container := range containers {
-			if container.Name == o.portForwardOptions.containter {
-				selectedContainer = container
-				break
-			}
-		}
-	} else if len(containers) == 1 {
+	if len(containers) == 1 {
 		selectedContainer = containers[0]
 	} else {
+		containerItems := []string{}
+		for _, container := range containers {
+			containerItems = append(containerItems, container.Name)
+		}
+
 		prompt := promptui.Select{
-			Label: "Select Container",
-			Items: containers,
+			Label: "More than one Container found, select one",
+			Items: containerItems,
 		}
 
 		index, _, err := prompt.Run()
@@ -55,55 +54,51 @@ func portForward(o *QueryOptions) error {
 		return fmt.Errorf("no ports found in container %s, pod %s, namespace: %s", selectedContainer.Name, o.selectedPod, o.namespace)
 	}
 
-	var selectedPort corev1.ContainerPort
+	var selectedPorts []corev1.ContainerPort
 
-	if o.portForwardOptions.containerPort != 0 {
-		for _, port := range ports {
-			if port.ContainerPort == o.portForwardOptions.containerPort {
-				selectedPort = port
-				break
-			}
-		}
-	} else if len(ports) == 1 {
-		selectedPort = ports[0]
+	portItems := []*prompt.Item{}
+
+	for i, port := range ports {
+		portItems = append(portItems, &prompt.Item{
+			ID:         fmt.Sprintf("%d %s", port.ContainerPort, port.Name),
+			Index:      i,
+			IsSelected: false,
+		})
+	}
+
+	if selectedPortItems, err := prompt.MultiSelect("Select ports to forward", portItems, 0); err != nil {
+		return err
 	} else {
-		prompt := promptui.Select{
-			Label: "Select Port",
-			Items: ports,
+		for _, port := range selectedPortItems {
+			selectedPorts = append(selectedPorts, ports[port.Index])
 		}
+	}
 
-		index, _, err := prompt.Run()
+	var portArgs []string
+
+	for _, port := range selectedPorts {
+		var hostPort int32
+
+		selectedHostPort, err := prompt.Text(fmt.Sprintf("Enter host port for %d (default: 0)", port.ContainerPort))
 		if err != nil {
-			fmt.Printf("Port selection prompt failed %v\n", err)
 			return err
 		}
 
-		selectedPort = ports[index]
-	}
-
-	var selectedHostPort int32
-
-	if o.portForwardOptions.hostPort != 0 {
-		selectedHostPort = o.portForwardOptions.hostPort
-	} else {
-		selectedHostPort = selectedPort.ContainerPort
-		for checkPortInUse(selectedHostPort) {
-			selectedHostPort++
+		if selectedHostPort != "" {
+			parsedSelectedHostPort, err := strconv.ParseInt(selectedHostPort, 10, 32)
+			if err != nil {
+				return err
+			}
+			hostPort = int32(parsedSelectedHostPort)
+		} else {
+			hostPort = 0
 		}
+
+		portArgs = append(portArgs, fmt.Sprintf("%d:%d", hostPort, port.ContainerPort))
 	}
 
-	exec.Command("kubectl", "port-forward", "-n", o.namespace, o.selectedPod, fmt.Sprintf("%d:%d", selectedHostPort, selectedPort.ContainerPort)).Start()
+	args := append([]string{"port-forward", "-n", o.namespace, o.selectedPod}, portArgs...)
+	args = append(args, o.forwardedKubectlArgs...)
 
-	return nil
-}
-
-func checkPortInUse(port int32) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-
-	if err != nil {
-		return true
-	}
-
-	_ = ln.Close()
-	return false
+	return k.Exec(args)
 }
