@@ -11,6 +11,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -46,17 +47,24 @@ var (
 	}
 )
 
+type namespaceOpts struct {
+	name string
+	flag string
+}
+
 type QueryOptions struct {
 	configFlags *genericclioptions.ConfigFlags
 	client      *kubernetes.Clientset
 
-	selectedPod string
+	selectedPod          string
+	selectedPodNamespace string
 
 	handler              SubCommandHandler
 	forwardedKubectlArgs []string
 
-	podRegex  string
-	namespace string
+	podRegex       string
+	allNamespaces  bool
+	queryNamespace string
 
 	genericclioptions.IOStreams
 }
@@ -95,6 +103,7 @@ func NewCmdQuery(streams genericclioptions.IOStreams) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&o.podRegex, "pod-regex", "r", "", "The regex to match the pod name")
+	cmd.Flags().BoolVarP(&o.allNamespaces, "all-namespaces", "A", false, "Query all namespaces")
 
 	o.configFlags.AddFlags(cmd.Flags())
 
@@ -103,14 +112,23 @@ func NewCmdQuery(streams genericclioptions.IOStreams) *cobra.Command {
 
 func (o *QueryOptions) Complete(cmd *cobra.Command, args []string) error {
 	var err error
-	if o.namespace, _, err = o.configFlags.ToRawKubeConfigLoader().Namespace(); err != nil {
+
+	if o.queryNamespace, err = cmd.Flags().GetString("namespace"); err != nil {
 		return err
 	}
 
-	if specifiedNamespace, err := cmd.Flags().GetString("namespace"); err != nil {
-		return err
-	} else if specifiedNamespace != "" {
-		o.namespace = specifiedNamespace
+	if o.queryNamespace != "" && o.allNamespaces {
+		return fmt.Errorf("cannot specify both namespace and all-namespaces")
+	}
+
+	if o.queryNamespace == "" && o.allNamespaces {
+		o.queryNamespace = metav1.NamespaceAll
+	}
+
+	if o.queryNamespace == "" && !o.allNamespaces {
+		if o.queryNamespace, _, err = o.configFlags.ToRawKubeConfigLoader().Namespace(); err != nil {
+			return err
+		}
 	}
 
 	if o.podRegex, err = cmd.Flags().GetString("pod-regex"); err != nil {
@@ -153,32 +171,40 @@ func (o *QueryOptions) Validate() error {
 }
 
 func (o *QueryOptions) Run() error {
-	pods, err := o.client.CoreV1().Pods(o.namespace).List(context.TODO(), metav1.ListOptions{})
+	pods, err := o.client.CoreV1().Pods(o.queryNamespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
 
-	matchingPods := []string{}
+	matchingPods := []corev1.Pod{}
 
 	for _, pod := range pods.Items {
 		if match, err := regexp.MatchString(o.podRegex, pod.Name); err != nil {
 			return err
 		} else if match {
-			matchingPods = append(matchingPods, pod.Name)
+			matchingPods = append(matchingPods, pod)
 		}
 	}
 
-	if len(matchingPods) == 0 {
-		return fmt.Errorf("No pods found matching regex %s in namespace %s", o.podRegex, o.namespace)
-	} else if len(matchingPods) == 1 {
-		o.selectedPod = matchingPods[0]
+	matchingPodNames := []string{}
+	for _, pod := range matchingPods {
+		matchingPodNames = append(matchingPodNames, fmt.Sprintf("%s - %s", pod.Name, pod.Namespace))
+	}
+
+	if len(matchingPodNames) == 0 {
+		return fmt.Errorf("No pods found matching regex %s in namespace %s", o.podRegex, o.queryNamespace)
+	} else if len(matchingPodNames) == 1 {
+		o.selectedPod = matchingPodNames[0]
 	} else {
 		prompt := promptui.Select{
-			Label: "Select Pod",
-			Items: matchingPods,
+			Label: "Select Pod (name - namespace)",
+			Items: matchingPodNames,
 		}
 
-		_, o.selectedPod, err = prompt.Run()
+		index, _, err := prompt.Run()
+
+		o.selectedPod = matchingPods[index].Name
+		o.selectedPodNamespace = matchingPods[index].Namespace
 
 		if err != nil {
 			fmt.Printf("Prompt failed %v\n", err)

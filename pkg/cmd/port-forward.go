@@ -13,7 +13,7 @@ import (
 )
 
 func portForward(o *QueryOptions) error {
-	pod, err := o.client.CoreV1().Pods(o.namespace).Get(context.TODO(), o.selectedPod, metav1.GetOptions{})
+	pod, err := o.client.CoreV1().Pods(o.selectedPodNamespace).Get(context.TODO(), o.selectedPod, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -21,7 +21,7 @@ func portForward(o *QueryOptions) error {
 	containers := pod.Spec.Containers
 
 	if len(containers) == 0 {
-		return fmt.Errorf("no containers found in pod %s, namespace: %s", o.selectedPod, o.namespace)
+		return fmt.Errorf("no containers found in pod %s, namespace: %s", o.selectedPod, o.selectedPodNamespace)
 	}
 
 	var selectedContainer corev1.Container
@@ -51,7 +51,7 @@ func portForward(o *QueryOptions) error {
 	ports := selectedContainer.Ports
 
 	if len(ports) == 0 {
-		return fmt.Errorf("no ports found in container %s, pod %s, namespace: %s", selectedContainer.Name, o.selectedPod, o.namespace)
+		return fmt.Errorf("no ports found in container %s, pod %s, namespace: %s", selectedContainer.Name, o.selectedPod, o.selectedPodNamespace)
 	}
 
 	var selectedPorts []corev1.ContainerPort
@@ -97,7 +97,7 @@ func portForward(o *QueryOptions) error {
 		portArgs = append(portArgs, fmt.Sprintf("%d:%d", hostPort, port.ContainerPort))
 	}
 
-	args := append([]string{"port-forward", "-n", o.namespace, o.selectedPod}, portArgs...)
+	args := append([]string{"port-forward", "-n", o.selectedPodNamespace, o.selectedPod}, portArgs...)
 	args = append(args, o.forwardedKubectlArgs...)
 
 	return k.Exec(args)
