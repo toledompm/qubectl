@@ -50,27 +50,27 @@ func portForward(o *QueryOptions) error {
 
 	ports := selectedContainer.Ports
 
-	if len(ports) == 0 {
-		return fmt.Errorf("no ports found in container %s, pod %s, namespace: %s", selectedContainer.Name, o.selectedPod, o.selectedPodNamespace)
-	}
-
 	var selectedPorts []corev1.ContainerPort
 
-	portItems := []*prompt.Item{}
-
-	for i, port := range ports {
-		portItems = append(portItems, &prompt.Item{
-			ID:         fmt.Sprintf("%d %s", port.ContainerPort, port.Name),
-			Index:      i,
-			IsSelected: false,
-		})
-	}
-
-	if selectedPortItems, err := prompt.MultiSelect("Select ports to forward", portItems, 0); err != nil {
-		return err
+	if len(ports) == 0 {
+		return fmt.Errorf("no ports found in container %s, pod %s, namespace: %s", selectedContainer.Name, o.selectedPod, o.selectedPodNamespace)
+	} else if len(ports) == 1 {
+		selectedPorts = append(selectedPorts, ports[0])
 	} else {
-		for _, port := range selectedPortItems {
-			selectedPorts = append(selectedPorts, ports[port.Index])
+		portItems := []*prompt.Item{}
+		for i, port := range ports {
+			portItems = append(portItems, &prompt.Item{
+				ID:         fmt.Sprintf("%d %s", port.ContainerPort, port.Name),
+				Index:      i,
+				IsSelected: false,
+			})
+		}
+		if selectedPortItems, err := prompt.MultiSelect("Select ports to forward", portItems, 0); err != nil {
+			return err
+		} else {
+			for _, port := range selectedPortItems {
+				selectedPorts = append(selectedPorts, ports[port.Index])
+			}
 		}
 	}
 

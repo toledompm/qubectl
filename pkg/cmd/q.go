@@ -194,7 +194,8 @@ func (o *QueryOptions) Run() error {
 	if len(matchingPodNames) == 0 {
 		return fmt.Errorf("No pods found matching regex %s in namespace %s", o.podRegex, o.queryNamespace)
 	} else if len(matchingPodNames) == 1 {
-		o.selectedPod = matchingPodNames[0]
+		o.selectedPod = matchingPods[0].Name
+		o.selectedPodNamespace = matchingPods[0].Namespace
 	} else {
 		prompt := promptui.Select{
 			Label: "Select Pod (name - namespace)",
