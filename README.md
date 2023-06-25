@@ -1,5 +1,5 @@
 # Q
-Kubectl query plugin, `q` queries the namespace for a pod and prompts the user for selection, after which it will forward the selected pod to a provided kubectl command. Some commands are handled directly by `q` and require further input from the user, simpler use cases should be handled by the `custom` command.
+The `q` plugin queries the namespace for a pod and prompts the user for selection, after which it will forward the selected pod to a provided kubectl command. Some commands are handled directly by `q` and require further input from the user, simpler use cases should be handled by the `custom` command.
 
 ![example-pf.gif](./docs/images/example.gif)
 
@@ -40,6 +40,11 @@ kubectl q -- exec %% -- ls # -> kubectl exec <pod> -- ls
 kubectl q port-forward [flags] -- [args]
 ```
 This command will prompt the user for a pod and then forward the selected ports using the kubectl port-forward command. 
+
+## Flags
+### -r (regex)
 ```bash
-kubectl q port-forward
+kubectl q -r [regex]
 ```
+
+This flag will filter the list of pods by the provided regex. The regex is applied to the pod name.
